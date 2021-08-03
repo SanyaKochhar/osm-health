@@ -2,6 +2,7 @@ package pod
 
 import (
 	"fmt"
+	"log"
 
 	v1 "k8s.io/api/core/v1"
 
@@ -29,9 +30,10 @@ func (check EnvoySidecarImageCheck) Info() string {
 // Run implements common.Runnable
 func (check EnvoySidecarImageCheck) Run() error {
 	cfg := kuberneteshelper.GetOsmConfigurator(check.pod)
-
+	log.Printf("Expected envoy image is %s", cfg.GetEnvoyImage())
 	for _, container := range check.pod.Spec.Containers {
 		if container.Image == cfg.GetEnvoyImage() {
+			log.Printf("Found envoy image %s", container.Image)
 			return nil
 		}
 	}

@@ -21,9 +21,6 @@ import (
 
 func TestHasExpectedEnvoyImage(t *testing.T) {
 	assert := tassert.New(t)
-	meshConfigClientSet := testclient.NewSimpleClientset()
-	stop := make(chan struct{})
-	defer close(stop)
 	osmNamespace := "osm-system"
 	osmMeshConfigName := "osm-mesh-config"
 
@@ -43,7 +40,7 @@ func TestHasExpectedEnvoyImage(t *testing.T) {
 					Containers: []corev1.Container{
 						{
 							Name:  "EnvoyContainer",
-							Image: "envoyproxy/envoy-alpine:v1.18.3",
+							Image: "envoyproxy/envoy-alpine:v1.18.777",
 						},
 					},
 				},
@@ -56,10 +53,35 @@ func TestHasExpectedEnvoyImage(t *testing.T) {
 			},
 			expectedError: nil,
 		},
+		{
+			pod: corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "pod-2",
+				},
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{
+						{
+							Name:  "EnvoyContainer",
+							Image: "envoyproxy/envoy-alpine:v1.18.555",
+						},
+					},
+				},
+			},
+			meshConfigSpec: &v1alpha1.MeshConfigSpec{
+				Sidecar: v1alpha1.SidecarSpec{
+					EnvoyImage:         "randomimage/random:v0.0.0",
+					InitContainerImage: "openservicemesh/init:v0.0.0",
+				},
+			},
+			expectedError: nil,
+		},
 	}
 
 	for _, tc := range testCases {
 		sidecarImageChecker := HasExpectedEnvoyImage(&tc.pod)
+		meshConfigClientSet := testclient.NewSimpleClientset()
+		stop := make(chan struct{})
+		defer close(stop)
 		meshConfig := v1alpha1.MeshConfig{
 			ObjectMeta: metav1.ObjectMeta{
 				Namespace: osmNamespace,
