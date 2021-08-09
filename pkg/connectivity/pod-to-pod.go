@@ -9,6 +9,7 @@ import (
 	"github.com/openservicemesh/osm-health/pkg/kubernetes/podhelper"
 	"github.com/openservicemesh/osm-health/pkg/kuberneteshelper"
 	"github.com/openservicemesh/osm-health/pkg/osm"
+	"github.com/openservicemesh/osm/pkg/constants"
 )
 
 // PodToPod tests the connectivity between a source and destination pods.
@@ -18,6 +19,7 @@ func PodToPod(fromPod *v1.Pod, toPod *v1.Pod) {
 	// TODO
 	meshName := common.MeshName("osm")
 	osmVersion := osm.ControllerVersion("v0.9")
+	meshConfigName := constants.OSMMeshConfig
 
 	client, err := kuberneteshelper.GetKubeClient()
 	if err != nil {
@@ -36,6 +38,8 @@ func PodToPod(fromPod *v1.Pod, toPod *v1.Pod) {
 		log.Err(err).Msgf("Error creating ConfigGetter for pod %s/%s", toPod.Namespace, toPod.Name)
 	}
 
+	configurator := kuberneteshelper.GetOsmConfigurator(osmNamespace, meshConfigName)
+
 	outcomes := common.Run(
 		// Check that pod namespaces are in the same mesh
 		namespace.AreNamespacesInSameMesh(client, fromPod.Namespace, toPod.Namespace),
@@ -43,16 +47,18 @@ func PodToPod(fromPod *v1.Pod, toPod *v1.Pod) {
 		// Check source Pod's namespace
 		namespace.IsInjectEnabled(client, fromPod.Namespace),
 		namespace.IsMonitoredBy(client, fromPod.Namespace, meshName),
-		podhelper.HasMinExpectedContainers(fromPod, 3),
-		podhelper.HasExpectedEnvoyImage(fromPod),
+		podhelper.HasMinExpectedContainers(fromPod, 2),
+		podhelper.HasExpectedOsmInitImage(configurator, fromPod),
+		podhelper.HasExpectedEnvoyImage(configurator, fromPod),
 		podhelper.HasProxyUUIDLabel(fromPod),
 		podhelper.DoesNotHaveBadEvents(client, fromPod),
 
 		// Check destination Pod's namespace
 		namespace.IsInjectEnabled(client, toPod.Namespace),
 		namespace.IsMonitoredBy(client, toPod.Namespace, meshName),
-		podhelper.HasMinExpectedContainers(toPod, 3),
-		podhelper.HasExpectedEnvoyImage(toPod),
+		podhelper.HasMinExpectedContainers(toPod, 2),
+		podhelper.HasExpectedOsmInitImage(configurator, toPod),
+		podhelper.HasExpectedEnvoyImage(configurator, toPod),
 		podhelper.HasProxyUUIDLabel(toPod),
 		podhelper.DoesNotHaveBadEvents(client, toPod),
 

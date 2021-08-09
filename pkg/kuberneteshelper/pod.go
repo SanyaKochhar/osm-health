@@ -94,12 +94,12 @@ func GetKubeClient() (kubernetes.Interface, error) {
 }
 
 // GetOsmConfigurator returns a new OSM configurator
-func GetOsmConfigurator(pod *v1.Pod) configurator.Configurator {
+func GetOsmConfigurator(osmNamespace common.MeshNamespace, meshConfigName string) configurator.Configurator {
 	stop := signals.RegisterExitHandlers()
 	kubeConfig, err := GetKubeConfig()
 	if err != nil {
 		log.Err(err).Msg("Error getting kubeconfig")
 	}
-	cfg := configurator.NewConfigurator(versioned.NewForConfigOrDie(kubeConfig), stop, pod.Namespace, pod.Name)
+	cfg := configurator.NewConfigurator(versioned.NewForConfigOrDie(kubeConfig), stop, osmNamespace.String(), meshConfigName)
 	return cfg
 }
