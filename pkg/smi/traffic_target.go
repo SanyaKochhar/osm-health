@@ -3,8 +3,7 @@ package smi
 import (
 	"context"
 	"fmt"
-
-	"github.com/openservicemesh/osm-health/pkg/common/outcomes"
+	"strings"
 
 	access "github.com/servicemeshinterface/smi-sdk-go/pkg/apis/access/v1alpha3"
 	smiAccessClient "github.com/servicemeshinterface/smi-sdk-go/pkg/gen/client/access/clientset/versioned"
@@ -12,6 +11,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/openservicemesh/osm-health/pkg/common"
+	"github.com/openservicemesh/osm-health/pkg/common/outcomes"
 	"github.com/openservicemesh/osm/pkg/cli"
 	"github.com/openservicemesh/osm/pkg/configurator"
 )
@@ -45,20 +45,23 @@ func (check TrafficTargetCheck) Description() string {
 // Run implements common.Runnable
 func (check TrafficTargetCheck) Run() outcomes.Outcome {
 	// Check if permissive mode is enabled, in which case every meshed pod is allowed to communicate with each other
-	// TODO: this should not be an error! ref issue #63. Change to diagnostic once #70 is merged
 	if check.cfg.IsPermissiveTrafficPolicyMode() {
 		return outcomes.DiagnosticOutcome{LongDiagnostics: fmt.Sprintf("OSM is in permissive traffic policy modes -- all meshed pods can communicate and SMI access policies are not applicable")}
 	}
-	trafficTargets, err := getMatchingTrafficTargets(check.accessClient, check.srcPod, check.dstPod)
+	matchingTrafficTargets, err := getMatchingTrafficTargets(check.accessClient, check.srcPod, check.dstPod)
 	if err != nil {
 		return outcomes.FailedOutcome{Error: err}
 	}
-	if len(trafficTargets) == 0 {
+	if len(matchingTrafficTargets) == 0 {
 		return outcomes.DiagnosticOutcome{LongDiagnostics: fmt.Sprintf("Pod '%s/%s' is not allowed to communicate to pod '%s/%s' via any SMI TrafficTarget policy\n",
 			check.srcPod.Namespace, check.srcPod.Name, check.dstPod.Namespace, check.dstPod.Name)}
 	}
-	return outcomes.DiagnosticOutcome{LongDiagnostics: fmt.Sprintf("Pod '%s/%s' is allowed to communicate to pod '%s/%s' via an SMI TrafficTarget policy",
-		check.srcPod.Namespace, check.srcPod.Name, check.dstPod.Namespace, check.dstPod.Name)}
+	ret := fmt.Sprintf("Pod '%s/%s' is allowed to communicate to pod '%s/%s' via SMI TrafficTarget policy/policies:",
+		check.srcPod.Namespace, check.srcPod.Name, check.dstPod.Namespace, check.dstPod.Name)
+	for _, trafficTarget := range matchingTrafficTargets {
+		ret = fmt.Sprintf("%s %s, ", ret, trafficTarget.Name)
+	}
+	return outcomes.DiagnosticOutcome{LongDiagnostics: strings.TrimSuffix(ret, ", ")}
 }
 
 // Suggestion implements common.Runnable
@@ -87,7 +90,6 @@ func getMatchingTrafficTargets(smiAccessClient smiAccessClient.Interface, srcPod
 		}
 		// The TrafficTarget destination is associated to 'dstPod', check if 'srcPod` is an allowed source to this destination
 		if cli.DoesTargetRefSrcPod(spec, srcPod) {
-			//foundTrafficTarget = true
 			matchingTrafficTargets = append(matchingTrafficTargets, &trafficTarget)
 		}
 	}
@@ -150,13 +152,13 @@ func (check RoutesValidityCheck) Run() outcomes.Outcome {
 		}
 	}
 	if len(unsupportedRouteTargets) > 0 {
-		errorString := generateErrorMessage(unsupportedRouteTargets)
+		errorString := check.generateErrorMessage(unsupportedRouteTargets)
 		return outcomes.FailedOutcome{Error: fmt.Errorf(errorString)}
 	}
 	return outcomes.SuccessfulOutcomeWithoutDiagnostics{}
 }
 
-func generateErrorMessage(targetToKindMap map[string]string) string {
+func (c *RoutesValidityCheck) generateErrorMessage(targetToKindMap map[string]string) string {
 	errorString := fmt.Sprintf("Expected routes of kind %s or %s, found the following TrafficTargets with unsupported routes: \n", HTTPRouteGroupKind, TCPRouteKind)
 	for target, kind := range targetToKindMap {
 		errorString = fmt.Sprintf("%s %s: %s\n", errorString, target, kind)
