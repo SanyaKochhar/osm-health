@@ -105,7 +105,8 @@ func PodToPod(fromPod *corev1.Pod, toPod *corev1.Pod, osmControlPlaneNamespace s
 
 		// Run SMI checks
 		smi.IsInTrafficSplit(client, toPod, splitClient),
-		smi.IsInTrafficTarget(client, configurator, fromPod, toPod, accessClient),
+		smi.IsInTrafficTarget(configurator, fromPod, toPod, accessClient),
+		smi.AreTrafficRoutesValid(configurator, fromPod, toPod, accessClient),
 	)
 
 	common.Print(outcomes...)

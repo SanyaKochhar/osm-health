@@ -10,7 +10,6 @@ import (
 	smiAccessClient "github.com/servicemeshinterface/smi-sdk-go/pkg/gen/client/access/clientset/versioned"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/kubernetes"
 
 	"github.com/openservicemesh/osm-health/pkg/common"
 	"github.com/openservicemesh/osm/pkg/cli"
@@ -22,7 +21,6 @@ var _ common.Runnable = (*TrafficTargetCheck)(nil)
 
 // TrafficTargetCheck implements common.Runnable
 type TrafficTargetCheck struct {
-	client       kubernetes.Interface
 	cfg          configurator.Configurator
 	srcPod       *corev1.Pod
 	dstPod       *corev1.Pod
@@ -30,9 +28,8 @@ type TrafficTargetCheck struct {
 }
 
 // IsInTrafficTarget checks whether the src and dest pods are referenced as src and dest in a TrafficTarget (in that order)
-func IsInTrafficTarget(client kubernetes.Interface, osmConfigurator configurator.Configurator, srcPod *corev1.Pod, dstPod *corev1.Pod, smiAccessClient smiAccessClient.Interface) TrafficTargetCheck {
+func IsInTrafficTarget(osmConfigurator configurator.Configurator, srcPod *corev1.Pod, dstPod *corev1.Pod, smiAccessClient smiAccessClient.Interface) TrafficTargetCheck {
 	return TrafficTargetCheck{
-		client:       client,
 		cfg:          osmConfigurator,
 		srcPod:       srcPod,
 		dstPod:       dstPod,
@@ -141,44 +138,81 @@ b) call the function, returns list of traffic targets.
 - if even one not valid, append the traffic target name to an existing string that will be returned as an error.
 */
 
-//const (
-//	HTTPRouteGroupKind = "HTTPRouteGroup"
-//	TCPRouteKind       = "TCPRoute"
-//)
-//
-//// Run implements common.Runnable
-//func (check TargetRouteValidityCheck) Run() outcomes.Outcome {
-//	// Check if permissive mode is enabled, in which case every meshed pod is allowed to communicate with each other
-//	if check.cfg.IsPermissiveTrafficPolicyMode() {
-//		return outcomes.DiagnosticOutcome{LongDiagnostics: fmt.Sprintf("OSM is in permissive traffic policy modes -- all meshed pods can communicate and SMI access policies are not applicable")}
-//	}
-//	trafficTargets, err := check.accessClient.AccessV1alpha3().TrafficTargets(check.dstPod.Namespace).List(context.TODO(), metav1.ListOptions{})
-//	if err != nil {
-//		return err
-//	}
-//	unsupportedRouteTargets := map[string]string{}
-//	for _, trafficTarget := range trafficTargets.Items {
-//		spec := trafficTarget.Spec
-//		if !doesTargetMatchPods(spec, check.srcPod, check.dstPod) {
-//			continue
-//		}
-//		for kind := range spec.Rules.Kind {
-//			if !(kind == HTTPRouteGroupKind || kind == TCPRouteKind) {
-//				unsupportedRouteTargets[trafficTarget.Name] = kind
-//			}
-//		}
-//	}
-//	if len(unsupportedRouteTargets) > 0 {
-//		errorString := generateErrorMessage(unsupportedRouteTargets)
-//		return outcomes.FailedOutcome{Error: fmt.Errorf(errorString)}
-//	}
-//	return outcomes.SuccessfulOutcomeWithoutDiagnostics{}
-//}
-//
-//func generateErrorMessage(targetToKindMap map[string]string) string {
-//	errorString := fmt.Sprintf("Expected routes of kind %s or %s, found the following TrafficTargets with unsupported routes: \n", HTTPRouteGroupKind, TCPRouteKind)
-//	for target, kind := range targetToKindMap {
-//		errorString = fmt.Sprintf("%s %s: %s\n", errorString, target, kind)
-//	}
-//	return errorString
-//}
+// Verify interface compliance
+var _ common.Runnable = (*RoutesValidityCheck)(nil)
+
+// TrafficTargetCheck implements common.Runnable
+type RoutesValidityCheck struct {
+	cfg          configurator.Configurator
+	srcPod       *corev1.Pod
+	dstPod       *corev1.Pod
+	accessClient smiAccessClient.Interface
+}
+
+// IsInTrafficTarget checks whether the src and dest pods are referenced as src and dest in a TrafficTarget (in that order)
+func AreTrafficRoutesValid(osmConfigurator configurator.Configurator, srcPod *corev1.Pod, dstPod *corev1.Pod, smiAccessClient smiAccessClient.Interface) RoutesValidityCheck {
+	return RoutesValidityCheck{
+		cfg:          osmConfigurator,
+		srcPod:       srcPod,
+		dstPod:       dstPod,
+		accessClient: smiAccessClient,
+	}
+}
+
+const (
+	HTTPRouteGroupKind = "HTTPRouteGroup"
+	TCPRouteKind       = "TCPRoute"
+)
+
+// Info implements common.Runnable
+func (check RoutesValidityCheck) Description() string {
+	return fmt.Sprintf("Checking whether Traffic Targets with source pod %s and destination pod %s have valid routes (%s or %s)", check.srcPod.Name, check.dstPod.Name, HTTPRouteGroupKind, TCPRouteKind)
+}
+
+// Run implements common.Runnable
+func (check RoutesValidityCheck) Run() outcomes.Outcome {
+	// Check if permissive mode is enabled, in which case every meshed pod is allowed to communicate with each other
+	if check.cfg.IsPermissiveTrafficPolicyMode() {
+		return outcomes.DiagnosticOutcome{LongDiagnostics: fmt.Sprintf("OSM is in permissive traffic policy modes -- all meshed pods can communicate and SMI access policies are not applicable")}
+	}
+	trafficTargets, err := check.accessClient.AccessV1alpha3().TrafficTargets(check.dstPod.Namespace).List(context.TODO(), metav1.ListOptions{})
+	if err != nil {
+		return outcomes.FailedOutcome{Error: err}
+	}
+	unsupportedRouteTargets := map[string]string{}
+	for _, trafficTarget := range trafficTargets.Items {
+		spec := trafficTarget.Spec
+		if !doesTargetMatchPods(spec, check.srcPod, check.dstPod) {
+			continue
+		}
+		for _, rule := range spec.Rules {
+			kind := rule.Kind
+			if !(kind == HTTPRouteGroupKind || kind == TCPRouteKind) {
+				unsupportedRouteTargets[trafficTarget.Name] = kind
+			}
+		}
+	}
+	if len(unsupportedRouteTargets) > 0 {
+		errorString := generateErrorMessage(unsupportedRouteTargets)
+		return outcomes.FailedOutcome{Error: fmt.Errorf(errorString)}
+	}
+	return outcomes.SuccessfulOutcomeWithoutDiagnostics{}
+}
+
+func generateErrorMessage(targetToKindMap map[string]string) string {
+	errorString := fmt.Sprintf("Expected routes of kind %s or %s, found the following TrafficTargets with unsupported routes: \n", HTTPRouteGroupKind, TCPRouteKind)
+	for target, kind := range targetToKindMap {
+		errorString = fmt.Sprintf("%s %s: %s\n", errorString, target, kind)
+	}
+	return errorString
+}
+
+// Suggestion implements common.Runnable
+func (check RoutesValidityCheck) Suggestion() string {
+	return fmt.Sprintf("Check that TrafficTargets routes are of kind %s or %s. To get relevant TrafficTargets, use: \"kubectl get traffictarget -n %s -o yaml\"", HTTPRouteGroupKind, TCPRouteKind, check.dstPod.Namespace)
+}
+
+// FixIt implements common.Runnable
+func (check RoutesValidityCheck) FixIt() error {
+	panic("implement me")
+}
