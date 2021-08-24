@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/openservicemesh/osm-health/pkg/common/outcomes"
+
 	smiAccessClient "github.com/servicemeshinterface/smi-sdk-go/pkg/gen/client/access/clientset/versioned"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -38,20 +40,20 @@ func IsInTrafficTarget(client kubernetes.Interface, osmConfigurator configurator
 }
 
 // Info implements common.Runnable
-func (check TrafficTargetCheck) Info() string {
+func (check TrafficTargetCheck) Description() string {
 	return fmt.Sprintf("Checking whether there is a Traffic Target with source pod %s and destination pod %s", check.srcPod.Name, check.dstPod.Name)
 }
 
 // Run implements common.Runnable
-func (check TrafficTargetCheck) Run() error {
+func (check TrafficTargetCheck) Run() outcomes.Outcome {
 	// Check if permissive mode is enabled, in which case every meshed pod is allowed to communicate with each other
 	// TODO: this should not be an error! ref issue #63. Change to diagnostic once #70 is merged
 	if check.cfg.IsPermissiveTrafficPolicyMode() {
-		return ErrPermissiveModeEnabled
+		return outcomes.DiagnosticOutcome{LongDiagnostics: fmt.Sprintf("OSM is in permissive traffic policy modes -- SMI access policies are not applicable")}
 	}
 	trafficTargets, err := check.accessClient.AccessV1alpha3().TrafficTargets(check.dstPod.Namespace).List(context.TODO(), metav1.ListOptions{})
 	if err != nil {
-		return err
+		return outcomes.FailedOutcome{Error: err}
 	}
 	for _, trafficTarget := range trafficTargets.Items {
 		spec := trafficTarget.Spec
@@ -62,10 +64,12 @@ func (check TrafficTargetCheck) Run() error {
 		}
 		// The TrafficTarget destination is associated to 'dstPod', check if 'srcPod` is an allowed source to this destination
 		if cli.DoesTargetRefSrcPod(spec, check.srcPod) {
-			return nil
+			return outcomes.DiagnosticOutcome{LongDiagnostics: fmt.Sprintf("Pod '%s/%s' is allowed to communicate to pod '%s/%s' via the SMI TrafficTarget policy %q in namespace %s\n",
+				check.srcPod.Namespace, check.srcPod.Name, check.dstPod.Namespace, check.dstPod.Name, trafficTarget.Name, trafficTarget.Namespace)}
 		}
 	}
-	return ErrPodsNotInTrafficTarget
+	return outcomes.DiagnosticOutcome{LongDiagnostics: fmt.Sprintf("Pod '%s/%s' is not allowed to communicate to pod '%s/%s' via any SMI TrafficTarget policy\n",
+		check.srcPod.Namespace, check.srcPod.Name, check.dstPod.Namespace, check.dstPod.Name)}
 }
 
 // Suggestion implements common.Runnable
