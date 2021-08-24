@@ -1,6 +1,7 @@
 package connectivity
 
 import (
+	smiAccessClient "github.com/servicemeshinterface/smi-sdk-go/pkg/gen/client/access/clientset/versioned"
 	smiSplitClient "github.com/servicemeshinterface/smi-sdk-go/pkg/gen/client/split/clientset/versioned"
 	corev1 "k8s.io/api/core/v1"
 
@@ -34,6 +35,11 @@ func PodToPod(fromPod *corev1.Pod, toPod *corev1.Pod, osmControlPlaneNamespace s
 	splitClient, err := smiSplitClient.NewForConfig(kubeConfig)
 	if err != nil {
 		log.Err(err).Msg("Error initializing SMI split client")
+	}
+
+	accessClient, err := smiAccessClient.NewForConfig(kubeConfig)
+	if err != nil {
+		log.Err(err).Msg("Error initializing SMI access client")
 	}
 
 	var srcConfigGetter, dstConfigGetter envoy.ConfigGetter
@@ -99,6 +105,7 @@ func PodToPod(fromPod *corev1.Pod, toPod *corev1.Pod, osmControlPlaneNamespace s
 
 		// Run SMI checks
 		smi.IsInTrafficSplit(client, toPod, splitClient),
+		smi.IsInTrafficTarget(client, configurator, fromPod, toPod, accessClient),
 	)
 
 	common.Print(outcomes...)
