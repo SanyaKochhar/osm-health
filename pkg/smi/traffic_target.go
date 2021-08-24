@@ -49,25 +49,15 @@ func (check TrafficTargetCheck) Run() outcomes.Outcome {
 	if check.cfg.IsPermissiveTrafficPolicyMode() {
 		return outcomes.DiagnosticOutcome{LongDiagnostics: fmt.Sprintf("OSM is in permissive traffic policy modes -- all meshed pods can communicate and SMI access policies are not applicable")}
 	}
-	trafficTargets, err := check.accessClient.AccessV1alpha3().TrafficTargets(check.dstPod.Namespace).List(context.TODO(), metav1.ListOptions{})
+	trafficTargets, err := getMatchingTrafficTargets(check.accessClient, check.srcPod, check.dstPod)
 	if err != nil {
 		return outcomes.FailedOutcome{Error: err}
 	}
-	for _, trafficTarget := range trafficTargets.Items {
-		if doesTargetMatchPods(trafficTarget.Spec, check.srcPod, check.dstPod) {
-			return outcomes.DiagnosticOutcome{LongDiagnostics: fmt.Sprintf("Pod '%s/%s' is allowed to communicate to pod '%s/%s' via the SMI TrafficTarget policy %q in namespace %s\n",
-				check.srcPod.Namespace, check.srcPod.Name, check.dstPod.Namespace, check.dstPod.Name, trafficTarget.Name, trafficTarget.Namespace)}
-		}
+	if len(trafficTargets) == 0 {
+		return outcomes.DiagnosticOutcome{LongDiagnostics: fmt.Sprintf("Pod '%s/%s' is not allowed to communicate to pod '%s/%s' via any SMI TrafficTarget policy\n",
+			check.srcPod.Namespace, check.srcPod.Name, check.dstPod.Namespace, check.dstPod.Name)}
 	}
-	//trafficTargets, err := getTrafficTargets(check.accessClient, check.srcPod, check.dstPod)
-	//if err != nil {
-	//	return err
-	//}
-	//if len(trafficTargets) == 0 {
-	//	return ErrPodsNotInTrafficTarget
-	//}
-	//return nil
-	return outcomes.DiagnosticOutcome{LongDiagnostics: fmt.Sprintf("Pod '%s/%s' is not allowed to communicate to pod '%s/%s' via any SMI TrafficTarget policy\n",
+	return outcomes.DiagnosticOutcome{LongDiagnostics: fmt.Sprintf("Pod '%s/%s' is allowed to communicate to pod '%s/%s' via an SMI TrafficTarget policy",
 		check.srcPod.Namespace, check.srcPod.Name, check.dstPod.Namespace, check.dstPod.Name)}
 }
 
@@ -81,62 +71,28 @@ func (check TrafficTargetCheck) FixIt() error {
 	panic("implement me")
 }
 
-func doesTargetMatchPods(spec access.TrafficTargetSpec, srcPod *corev1.Pod, dstPod *corev1.Pod) bool {
-	// Map traffic targets to the given pods
-	if !cli.DoesTargetRefDstPod(spec, dstPod) {
-		return false
+func getMatchingTrafficTargets(smiAccessClient smiAccessClient.Interface, srcPod *corev1.Pod, dstPod *corev1.Pod) ([]*access.TrafficTarget, error) {
+	trafficTargets, err := smiAccessClient.AccessV1alpha3().TrafficTargets(dstPod.Namespace).List(context.TODO(), metav1.ListOptions{})
+	if err != nil {
+		return nil, err
 	}
-	// The TrafficTarget destination is associated to 'dstPod', check if 'srcPod` is an allowed source to this destination
-	if cli.DoesTargetRefSrcPod(spec, srcPod) {
-		return true
+	//var foundTrafficTarget bool
+	var matchingTrafficTargets []*access.TrafficTarget
+	for _, trafficTarget := range trafficTargets.Items {
+		spec := trafficTarget.Spec
+
+		// Map traffic targets to the given pods
+		if !cli.DoesTargetRefDstPod(spec, dstPod) {
+			continue
+		}
+		// The TrafficTarget destination is associated to 'dstPod', check if 'srcPod` is an allowed source to this destination
+		if cli.DoesTargetRefSrcPod(spec, srcPod) {
+			//foundTrafficTarget = true
+			matchingTrafficTargets = append(matchingTrafficTargets, &trafficTarget)
+		}
 	}
-	return false
+	return matchingTrafficTargets, nil
 }
-
-//
-//func getTrafficTargets(smiAccessClient smiAccessClient.Interface, srcPod *corev1.Pod, dstPod *corev1.Pod) ([]*access.TrafficTarget, error) {
-//	trafficTargets, err := smiAccessClient.AccessV1alpha3().TrafficTargets(dstPod.Namespace).List(context.TODO(), metav1.ListOptions{})
-//	if err != nil {
-//		return nil, err
-//	}
-//	//var foundTrafficTarget bool
-//	var matchingTrafficTargets []*access.TrafficTarget
-//	for _, trafficTarget := range trafficTargets.Items {
-//		spec := trafficTarget.Spec
-//
-//		// Map traffic targets to the given pods
-//		if !cli.DoesTargetRefDstPod(spec, check.dstPod) {
-//			continue
-//		}
-//		// The TrafficTarget destination is associated to 'dstPod', check if 'srcPod` is an allowed source to this destination
-//		if cli.DoesTargetRefSrcPod(spec, check.srcPod) {
-//			//foundTrafficTarget = true
-//			matchingTrafficTargets = matchingTrafficTargets.append(matchingTrafficTargets, &trafficTarget)
-//		}
-//	}
-//	return matchingTrafficTargets, nil
-//}
-
-/**
-way one: call the function on each target
-a)
-- iterate over all the traffic targets
-- check if each one a match - return nil
-- if no match found, return error
-
-b) iterate over all the traffic targets
-- check if it's a match
-- if kind is a valid route, return nil
-	- if not, return error
-- return outcome???
-
-way two: get the actual traffictargets
-a) call the function, if error return error; if len(nil) return error. else return tt exists
-
-b) call the function, returns list of traffic targets.
-- iterate over each to see if valid
-- if even one not valid, append the traffic target name to an existing string that will be returned as an error.
-*/
 
 // Verify interface compliance
 var _ common.Runnable = (*RoutesValidityCheck)(nil)
@@ -175,16 +131,17 @@ func (check RoutesValidityCheck) Run() outcomes.Outcome {
 	if check.cfg.IsPermissiveTrafficPolicyMode() {
 		return outcomes.DiagnosticOutcome{LongDiagnostics: fmt.Sprintf("OSM is in permissive traffic policy modes -- all meshed pods can communicate and SMI access policies are not applicable")}
 	}
-	trafficTargets, err := check.accessClient.AccessV1alpha3().TrafficTargets(check.dstPod.Namespace).List(context.TODO(), metav1.ListOptions{})
+	matchingTrafficTargets, err := getMatchingTrafficTargets(check.accessClient, check.srcPod, check.dstPod)
 	if err != nil {
 		return outcomes.FailedOutcome{Error: err}
 	}
+	if len(matchingTrafficTargets) == 0 {
+		return outcomes.DiagnosticOutcome{LongDiagnostics: fmt.Sprintf("Pod '%s/%s' is not allowed to communicate to pod '%s/%s' via any SMI TrafficTarget policy\n",
+			check.srcPod.Namespace, check.srcPod.Name, check.dstPod.Namespace, check.dstPod.Name)}
+	}
 	unsupportedRouteTargets := map[string]string{}
-	for _, trafficTarget := range trafficTargets.Items {
+	for _, trafficTarget := range matchingTrafficTargets {
 		spec := trafficTarget.Spec
-		if !doesTargetMatchPods(spec, check.srcPod, check.dstPod) {
-			continue
-		}
 		for _, rule := range spec.Rules {
 			kind := rule.Kind
 			if !(kind == HTTPRouteGroupKind || kind == TCPRouteKind) {
