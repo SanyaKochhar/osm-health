@@ -1,6 +1,7 @@
 package connectivity
 
 import (
+	"github.com/openservicemesh/osm-health/pkg/smi/split"
 	smiAccessClient "github.com/servicemeshinterface/smi-sdk-go/pkg/gen/client/access/clientset/versioned"
 	smiSpecClient "github.com/servicemeshinterface/smi-sdk-go/pkg/gen/client/specs/clientset/versioned"
 	smiSplitClient "github.com/servicemeshinterface/smi-sdk-go/pkg/gen/client/split/clientset/versioned"
@@ -12,7 +13,6 @@ import (
 	"github.com/openservicemesh/osm-health/pkg/kubernetes/podhelper"
 	"github.com/openservicemesh/osm-health/pkg/kuberneteshelper"
 	"github.com/openservicemesh/osm-health/pkg/osm"
-	"github.com/openservicemesh/osm-health/pkg/smi"
 	"github.com/openservicemesh/osm-health/pkg/smi/access"
 )
 
@@ -127,7 +127,7 @@ func PodToPod(srcPod *corev1.Pod, dstPod *corev1.Pod, osmControlPlaneNamespace s
 		envoy.HasServiceCertificate(client, dstConfigGetter, dstPod),
 
 		// Run SMI checks
-		smi.NewTrafficSplitCheck(client, dstPod, splitClient),
+		split.NewTrafficSplitCheck(meshInfo.OSMVersion, client, dstPod, splitClient),
 		access.NewTrafficTargetCheck(meshInfo.OSMVersion, configurator, srcPod, dstPod, accessClient),
 		access.NewRoutesValidityCheck(meshInfo.OSMVersion, configurator, srcPod, dstPod, accessClient),
 		access.NewRoutesExistenceCheck(meshInfo.OSMVersion, configurator, srcPod, dstPod, accessClient, specClient),

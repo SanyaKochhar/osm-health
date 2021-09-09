@@ -1,7 +1,9 @@
-package smi
+package split
 
 import (
 	"testing"
+
+	"github.com/openservicemesh/osm-health/pkg/osm"
 
 	split "github.com/servicemeshinterface/smi-sdk-go/pkg/apis/split/v1alpha2"
 	fakeSmiSplitClient "github.com/servicemeshinterface/smi-sdk-go/pkg/gen/client/split/clientset/versioned/fake"
@@ -156,6 +158,7 @@ func TestIsInTrafficSplit(t *testing.T) {
 
 	for _, testCase := range testCases {
 		t.Run(testCase.name, func(t *testing.T) {
+			osmVersion := osm.ControllerVersion("v0.9")
 			assert := tassert.New(t)
 			svcObjs := make([]runtime.Object, len(testCase.serviceList))
 			for i := range testCase.serviceList {
@@ -169,7 +172,7 @@ func TestIsInTrafficSplit(t *testing.T) {
 			}
 			smiSplitClient := fakeSmiSplitClient.NewSimpleClientset(splitObjs...)
 
-			trafficSplitChecker := NewTrafficSplitCheck(client, &testCase.pod, smiSplitClient)
+			trafficSplitChecker := NewTrafficSplitCheck(osmVersion, client, &testCase.pod, smiSplitClient)
 			if testCase.isErrorExpected {
 				assert.Error(trafficSplitChecker.Run().GetError())
 			} else {

@@ -1,8 +1,10 @@
-package smi
+package split
 
 import (
 	"context"
 	"fmt"
+
+	"github.com/openservicemesh/osm-health/pkg/osm"
 
 	smiSplitClient "github.com/servicemeshinterface/smi-sdk-go/pkg/gen/client/split/clientset/versioned"
 	corev1 "k8s.io/api/core/v1"
@@ -19,14 +21,16 @@ var _ common.Runnable = (*TrafficSplitCheck)(nil)
 
 // TrafficSplitCheck implements common.Runnable
 type TrafficSplitCheck struct {
+	osmVersion  osm.ControllerVersion
 	client      kubernetes.Interface
 	pod         *corev1.Pod
 	splitClient smiSplitClient.Interface
 }
 
 // NewTrafficSplitCheck creates a TrafficSplitCheck which checks whether a pod is affected by an SMI traffic split
-func NewTrafficSplitCheck(client kubernetes.Interface, pod *corev1.Pod, smiSplitClient smiSplitClient.Interface) TrafficSplitCheck {
+func NewTrafficSplitCheck(osmVersion osm.ControllerVersion, client kubernetes.Interface, pod *corev1.Pod, smiSplitClient smiSplitClient.Interface) TrafficSplitCheck {
 	return TrafficSplitCheck{
+		osmVersion:  osmVersion,
 		client:      client,
 		pod:         pod,
 		splitClient: smiSplitClient,
@@ -40,6 +44,16 @@ func (check TrafficSplitCheck) Description() string {
 
 // Run implements common.Runnable
 func (check TrafficSplitCheck) Run() outcomes.Outcome {
+	switch osm.SupportedTrafficSplit[check.osmVersion] {
+	case osm.V1Alpha2:
+		return check.runForTrafficSplitV1alpha2()
+	default:
+		return outcomes.Fail{Error: fmt.Errorf(
+			"OSM Controller version could not be mapped to a TrafficSplit version. Supported versions are v0.5 through v0.9")}
+	}
+}
+
+func (check TrafficSplitCheck) runForTrafficSplitV1alpha2() outcomes.Outcome {
 	ns := check.pod.Namespace
 	services, err := kuberneteshelper.GetMatchingServices(check.client, check.pod.ObjectMeta.GetLabels(), ns)
 	if err != nil {
@@ -49,7 +63,6 @@ func (check TrafficSplitCheck) Run() outcomes.Outcome {
 		return outcomes.Info{Diagnostics: fmt.Sprintf("pod '%s/%s' does not have a corresponding service", ns, check.pod.Name)}
 	}
 
-	//TODO: eventually change to decide which split version to use based on information dynamically obtained from the cluster
 	trafficSplits, err := check.splitClient.SplitV1alpha2().TrafficSplits(ns).List(context.TODO(), metav1.ListOptions{})
 	if err != nil {
 		return outcomes.Fail{Error: err}
